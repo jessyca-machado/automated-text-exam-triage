@@ -1,0 +1,10 @@
+{
+  "url": "http://127.0.0.1:8000/predict",
+  "requests": 30,
+  "warmup_requests": 5,
+  "min_ms": 7.575,
+  "mean_ms": 16.577,
+  "median_ms": 16.927,
+  "p95_ms": 19.652,
+  "max_ms": 24.535
+}
