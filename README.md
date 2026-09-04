@@ -258,6 +258,14 @@ docker run --rm \
   automated-text-exam-triage:local
 ```
 
+#### Testes
+
+```bash
+uv run pytest
+```
+
+GitHub Actions, no push, roda lint (ruff) e pytest.
+
 #### Medir a latência
 
 Com a API em execução, execute:
