@@ -23,7 +23,6 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
-from starlette.responses import JSONResponse
 
 ROOT: Final[Path] = Path(__file__).resolve().parents[1]
 MODEL_PATH: Final[Path] = (

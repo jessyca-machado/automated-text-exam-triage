@@ -127,3 +127,53 @@ def test_predict_requires_text_field(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_metrics_endpoint_exposes_request_metrics(
+    client: TestClient,
+) -> None:
+    """Verifica se a API expõe métricas do Prometheus."""
+    health_response = client.get("/health")
+
+    assert health_response.status_code == 200
+
+    metrics_response = client.get("/metrics")
+
+    assert metrics_response.status_code == 200
+    assert "text/plain" in metrics_response.headers["content-type"]
+
+    metrics = metrics_response.text
+
+    assert "api_requests_total" in metrics
+    assert "api_request_duration_seconds" in metrics
+    assert 'endpoint="/health"' in metrics
+    assert 'method="GET"' in metrics
+    assert 'status="200"' in metrics
+
+
+def test_metrics_endpoint_records_prediction_request(
+    client: TestClient,
+) -> None:
+    """Verifica se as requisições de classificação são contabilizadas."""
+    response = client.post(
+        "/predict",
+        json={
+            "texto": (
+                "Paciente apresenta alterações no sistema "
+                "cardiovascular."
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+    metrics_response = client.get("/metrics")
+
+    assert metrics_response.status_code == 200
+
+    metrics = metrics_response.text
+
+    assert 'endpoint="/predict"' in metrics
+    assert 'method="POST"' in metrics
+    assert 'status="200"' in metrics
+    assert "api_request_duration_seconds_count" in metrics
