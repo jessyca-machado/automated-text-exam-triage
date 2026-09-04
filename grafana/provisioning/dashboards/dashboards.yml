@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: Automated Text Exam Triage
+    orgId: 1
+    folder: Automated Text Exam Triage
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
