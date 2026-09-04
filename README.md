@@ -282,3 +282,25 @@ uv run python scripts/measure_latency.py \
 ```
 
 O benchmark informa a latência mínima, média, mediana, P95 e máxima.
+
+### Monitoramento
+
+O arquivo `docker-compose.yml` inicia a API, o Prometheus, o Grafana e o Airflow:
+
+```bash
+docker compose up --build -d
+```
+
+Serviços disponíveis:
+- API: http://localhost:8000
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (admin / admin)
+- Airflow: http://localhost:8080
+
+Para popular os graficos:
+
+```bash
+uv run python scripts/generate_traffic.py --requests 200
+```
+
+será possível visualizar os painéis: Total de requisições, Latência média e P95, Taxa de erros HTTP 5xx e Requisições agrupadas por status HTTP.
