@@ -191,3 +191,86 @@ A arquitetura inicial pode ser resumida da seguinte maneira:
 A decisão final é, portanto, adotar uma **arquitetura híbrida no GCP**, utilizando **real-time inference para a triagem operacional dos laudos** e **batch processing para treinamento, avaliação, reprocessamento e análises offline**.
 
 Essa arquitetura atende simultaneamente aos requisitos funcionais do sistema de triagem e aos objetivos de MLOps do projeto, mantendo a solução simples o suficiente para ser implementada, testada e observada de ponta a ponta.
+
+### Execução do projeto
+
+As dependências são gerenciadas pelo `uv` e o projeto utiliza Python 3.12.7.
+
+#### Instalar dependências
+
+```bash
+uv sync
+```
+
+#### Preparar os dados
+
+```bash
+uv run python scripts/prepare_medical_abstracts.py
+```
+
+Esse comando gera:
+
+```text
+data/laudos.csv
+```
+
+#### Treinar o modelo
+
+```bash
+uv run python model/train.py
+```
+
+O modelo será salvo em:
+
+```text
+artifacts/medical_abstracts_model.joblib
+```
+
+#### Executar a API localmente
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+Teste a classificação:
+```bash
+curl -X POST http://127.0.0.1:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texto": "Paciente apresenta alterações no sistema cardiovascular."
+  }'
+```
+
+#### Executar com Docker
+
+Construa a imagem:
+
+```bash
+docker build -t automated-text-exam-triage:local .
+```
+
+Execute o container:
+
+```bash
+docker run --rm \
+  --name automated-text-exam-triage-api \
+  -p 8000:8000 \
+  automated-text-exam-triage:local
+```
+
+#### Medir a latência
+
+Com a API em execução, execute:
+
+```bash
+uv run python scripts/measure_latency.py
+```
+
+Para salvar os resultados:
+
+```bash
+uv run python scripts/measure_latency.py \
+  --output artifacts/latency-docker.json
+```
+
+O benchmark informa a latência mínima, média, mediana, P95 e máxima.
