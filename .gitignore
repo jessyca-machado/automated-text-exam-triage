@@ -8,4 +8,7 @@ __pycache__/
 .env
 .vscode/
 airflow/logs/
+airflow/airflow.db
+airflow/.env
+airflow/__pycache__/
 *.db
