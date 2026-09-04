@@ -12,6 +12,18 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sklearn.pipeline import Pipeline
 
+import time
+from collections.abc import Awaitable, Callable
+
+from fastapi import Request
+from fastapi.responses import Response
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Histogram,
+    generate_latest,
+)
+from starlette.responses import JSONResponse
 
 ROOT: Final[Path] = Path(__file__).resolve().parents[1]
 MODEL_PATH: Final[Path] = (
@@ -20,6 +32,19 @@ MODEL_PATH: Final[Path] = (
 
 logger = logging.getLogger(__name__)
 model: Pipeline | None = None
+
+
+REQUEST_COUNT = Counter(
+    "api_requests",
+    "Quantidade total de requisições recebidas pela API.",
+    labelnames=("method", "endpoint", "status"),
+)
+
+REQUEST_LATENCY = Histogram(
+    "api_request_duration_seconds",
+    "Tempo de processamento das requisições da API em segundos.",
+    labelnames=("method", "endpoint"),
+)
 
 
 class PredictionRequest(BaseModel):
@@ -83,6 +108,60 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def instrument_requests(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Registra quantidade e tempo de processamento das requisições.
+
+    Args:
+        request: Requisição HTTP recebida.
+        call_next: Próximo middleware ou endpoint da aplicação.
+
+    Returns:
+        Resposta HTTP gerada pela aplicação.
+    """
+    if request.url.path == "/metrics":
+        return await call_next(request)
+
+    started_at = time.perf_counter()
+    status_code = 500
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        elapsed = time.perf_counter() - started_at
+        route = request.scope.get("route")
+        endpoint = getattr(route, "path", request.url.path)
+
+        REQUEST_COUNT.labels(
+            method=request.method,
+            endpoint=endpoint,
+            status=str(status_code),
+        ).inc()
+
+        REQUEST_LATENCY.labels(
+            method=request.method,
+            endpoint=endpoint,
+        ).observe(elapsed)
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    """Expõe as métricas no formato esperado pelo Prometheus.
+
+    Returns:
+        Resposta contendo as métricas da aplicação.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 
 @app.get("/health")
