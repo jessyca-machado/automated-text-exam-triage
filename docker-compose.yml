@@ -1,10 +1,55 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: automated-text-exam-triage-api
+    ports:
+      - "8000:8000"
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: automated-text-exam-triage-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: automated-text-exam-triage-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
   airflow:
-    image: apache/airflow:2.10.5-python3.12
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
     container_name: automated-text-exam-triage-airflow
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: "/opt/airflow/dags"
+      AIRFLOW__CORE__EXECUTOR: "SequentialExecutor"
       PYTHONPATH: "/opt/airflow"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
@@ -15,4 +60,16 @@ services:
       - ./artifacts:/opt/airflow/artifacts
     ports:
       - "8080:8080"
+    networks:
+      - monitoring
     command: standalone
+    restart: unless-stopped
+
+
+networks:
+  monitoring:
+
+
+volumes:
+  prometheus_data:
+  grafana_data:
