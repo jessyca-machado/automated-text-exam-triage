@@ -304,3 +304,42 @@ uv run python scripts/generate_traffic.py --requests 200
 ```
 
 será possível visualizar os painéis: Total de requisições, Latência média e P95, Taxa de erros HTTP 5xx e Requisições agrupadas por status HTTP.
+
+### Otimização de inferência
+
+O modelo treinado originalmente em scikit-learn é salvo em formato Joblib.
+Também é realizada uma exportação para ONNX, executada com ONNX Runtime.
+
+Para exportar o modelo:
+
+```bash
+uv run python scripts/export_model_onnx.py
+```
+
+#### Comparação de latência
+
+Para comparar as latências:
+
+```bash
+uv run python scripts/compare_model_latency.py \
+  --warmup 10 \
+  --requests 100
+```
+
+Foram realizadas 100 inferências em cada modelo.
+
+| Modelo | Requisições | Mínimo (ms) | Média (ms) | Mediana (ms) | P95 (ms) | Máximo (ms) |
+|---|---:|---:|---:|---:|---:|---:|
+| Joblib/scikit-learn | 100 | 3,365 | 3,566 | 3,508 | 3,827 | 4,06 |
+| ONNX Runtime | 100 | 1,879 | 1,935 | 1,919 | 2,017 | 2,095 |
+
+#### Resultado
+
+O modelo executado com ONNX Runtime apresentou menor latência em todas as métricas analisadas.
+
+Considerando a latência média:
+
+- Joblib/scikit-learn: **3,566 ms**
+- ONNX Runtime: **1.935 ms**
+- Redução média: **45,74%**
+- Ganho de velocidade: aproximadamente **1,54x**
