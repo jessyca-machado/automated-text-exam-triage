@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: automated-text-exam-triage-api
     ports:
-      - "8000:8000"
+      - "8000:8080"
     networks:
       - monitoring
     restart: unless-stopped
