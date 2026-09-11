@@ -1,92 +1,116 @@
-"""DAG para simular o treinamento do modelo de classificação."""
+"""DAG periódica de ingestão e treinamento do modelo."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import logging
+from datetime import timedelta
 from typing import Any
 
 import pendulum
 from airflow.decorators import dag, task
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from model.train import (  # noqa: E402
-    DATA_PATH,
-    MODEL_PATH,
-    create_pipeline,
-    evaluate_model,
-    load_data,
-    save_model,
-    split_data,
-    train_model,
-)
+logger = logging.getLogger(__name__)
 
 
 @dag(
     dag_id="train_medical_abstracts_model",
-    description="Lê os dados, treina e salva o modelo de classificação.",
-    schedule=None,
-    start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
+    description=(
+        "Executa periodicamente a ingestão dos dados "
+        "e o treinamento do modelo."
+    ),
+    schedule="0 2 1 * *",
+    start_date=pendulum.datetime(2025, 1, 1, tz="America/Sao_Paulo"),
     catchup=False,
-    tags=["machine-learning", "training"],
+    max_active_runs=1,
+    default_args={
+        "owner": "ml-team",
+        "depends_on_past": False,
+        "retries": 2,
+        "retry_delay": timedelta(minutes=5),
+    },
+    tags=[
+        "machine-learning",
+        "monthly",
+        "ingestion",
+        "retraining",
+    ],
 )
 def train_medical_abstracts_model() -> Any:
-    """Define a DAG de treinamento do modelo."""
+    """Define o fluxo periódico de ingestão e treinamento."""
 
     @task
-    def read_training_data() -> dict[str, str | int]:
-        """Lê e valida o dataset utilizado no treinamento.
+    def ingest_data() -> str:
+        """Executa o script de preparação do dataset.
 
         Returns:
-            Metadados do dataset, incluindo caminho e quantidade de registros.
-
-        Raises:
-            FileNotFoundError: Se o dataset não existir.
-            ValueError: Se o dataset não possuir dados válidos.
+            Caminho esperado do dataset preparado.
         """
-        data = load_data(DATA_PATH)
+        from scripts.prepare_dataset_medical_abstracts import (
+            OUT_PATH,
+            main as prepare_dataset,
+        )
 
-        return {
-            "data_path": str(DATA_PATH),
-            "records": len(data),
-        }
+        logger.info("Iniciando ingestão do dataset.")
+
+        prepare_dataset()
+
+        if not OUT_PATH.exists():
+            raise FileNotFoundError(
+                f"Dataset não foi gerado: {OUT_PATH}"
+            )
+
+        logger.info(
+            "Dataset preparado com sucesso: %s",
+            OUT_PATH,
+        )
+
+        return str(OUT_PATH)
 
     @task
-    def train_and_save_model(
-        dataset_info: dict[str, str | int],
-    ) -> str:
-        """Treina o modelo e salva o artefato em formato Joblib.
+    def train_model(data_path: str) -> str:
+        """Executa o script existente de treinamento.
 
         Args:
-            dataset_info: Informações do dataset produzidas pela task
-                de leitura.
+            data_path: Caminho do dataset preparado pela task anterior.
 
         Returns:
-            Caminho do modelo salvo.
-
-        Raises:
-            FileNotFoundError: Se o dataset não existir.
-            ValueError: Se os dados forem inválidos.
+            Caminho esperado do modelo treinado.
         """
-        data_path = Path(str(dataset_info["data_path"]))
-        data = load_data(data_path)
+        from model.train import (
+            DATA_PATH,
+            MODEL_PATH,
+            main as train_model_script,
+        )
 
-        x_train, x_test, y_train, y_test = split_data(data)
+        if str(DATA_PATH) != data_path:
+            raise ValueError(
+                "O caminho retornado pela ingestão não corresponde "
+                f"ao caminho esperado pelo treinamento: "
+                f"{DATA_PATH}"
+            )
 
-        model = create_pipeline()
-        train_model(model, x_train, y_train)
-        evaluate_model(model, x_test, y_test)
-        save_model(model, MODEL_PATH)
+        logger.info(
+            "Iniciando treinamento com o dataset: %s",
+            DATA_PATH,
+        )
+
+        train_model_script()
+
+        if not MODEL_PATH.exists():
+            raise FileNotFoundError(
+                f"Modelo não foi gerado: {MODEL_PATH}"
+            )
+
+        logger.info(
+            "Modelo treinado com sucesso: %s",
+            MODEL_PATH,
+        )
 
         return str(MODEL_PATH)
 
-    dataset_info = read_training_data()
-    train_and_save_model(dataset_info)
+    dataset_path = ingest_data()
+    train_model(dataset_path)
 
 
 train_medical_abstracts_model()

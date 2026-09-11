@@ -204,7 +204,7 @@ A arquitetura inicial pode ser resumida da seguinte maneira:
 | Modelo inicial                   | **TF-IDF + regressão logístic**   |
 | Principal requisito de serving   | **Baixa latência**                |
 
-A decisão final é, portanto, adotar uma **arquitetura híbrida no GCP**, utilizando **real-time inference para a triagem operacional dos laudos** e **batch processing para treinamento, avaliação, reprocessamento e análises offline**.
+A decisão final é, portanto, adotar uma **arquitetura híbrida no GCP**, utilizando **real-time inference para a classificação operacional das especialidades dos laudos** e **batch processing para treinamento, avaliação, reprocessamento e análises offline**.
 
 Essa arquitetura atende simultaneamente aos requisitos funcionais do sistema de triagem e aos objetivos de MLOps do projeto, mantendo a solução simples o suficiente para ser implementada, testada e observada de ponta a ponta.
 
@@ -331,7 +331,7 @@ docker compose up --build -d
 Serviços disponíveis:
 - API: http://localhost:8000
 - Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin / admin)
+- Grafana: http://localhost:3000
 - Airflow: http://localhost:8080
 
 Credenciais padrão do Grafana:
@@ -405,3 +405,32 @@ O serviço disponibiliza classificação de laudos médicos por especialidade po
 Para consultar detalhes sobre a arquitetura, endpoints, exemplos de uso, execução local, Docker e benchmark de latência, acesse:
 
 [Documentação completa da API](docs/API.md)
+
+## Orquestração com Airflow
+
+O Airflow orquestra mensalmente a ingestão dos dados e o retreinamento do
+modelo de classificação de especialidades médicas.
+
+O fluxo executado pela DAG é:
+
+```text
+ingest_data → train_model
+```
+
+A DAG é executada no primeiro dia de cada mês, às 2h, no fuso America/Sao_Paulo.
+
+Para iniciar o Airflow localmente:
+
+```bash
+docker compose up --build -d airflow
+```
+
+A interface está disponível em:
+
+```text
+http://localhost:8080
+```
+
+Para consultar a documentação completa de configuração, execução e manutenção:
+
+[Documentação completa do Airflow](docs/AIRFLOW.md)
