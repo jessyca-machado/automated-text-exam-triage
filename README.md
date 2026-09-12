@@ -408,13 +408,17 @@ Para consultar detalhes sobre a arquitetura, endpoints, exemplos de uso, execuç
 
 ## Orquestração com Airflow
 
-O Airflow orquestra mensalmente a ingestão dos dados e o retreinamento do
-modelo de classificação de especialidades médicas.
+O Airflow orquestra mensalmente:
+
+1. A ingestão dos dados;
+2. O retreinamento do modelo;
+3. A publicação do modelo no Cloud Storage;
+4. A atualização do serviço no Cloud Run.
 
 O fluxo executado pela DAG é:
 
 ```text
-ingest_data → train_model
+ingest_data → train_model → publish_model
 ```
 
 A DAG é executada no primeiro dia de cada mês, às 2h, no fuso America/Sao_Paulo.

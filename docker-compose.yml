@@ -52,6 +52,13 @@ services:
       AIRFLOW__CORE__DAGS_FOLDER: "/opt/airflow/dags"
       AIRFLOW__CORE__EXECUTOR: "SequentialExecutor"
       PYTHONPATH: "/opt/airflow"
+      GOOGLE_APPLICATION_CREDENTIALS: "/opt/airflow/secrets/airflow-deployer.json"
+      CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: "/opt/airflow/secrets/airflow-deployer.json"
+      CLOUDSDK_CORE_PROJECT: "quantum-balm-260822"
+      GCP_PROJECT_ID: "quantum-balm-260822"
+      GCP_REGION: "us-central1"
+      GCP_BUCKET_NAME: "quantum-balm-260822-medical-models"
+      CLOUD_RUN_SERVICE: "medical-exam-api"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -60,6 +67,7 @@ services:
       - ./model:/opt/airflow/model
       - ./data:/opt/airflow/data
       - ./artifacts:/opt/airflow/artifacts
+      - ./secrets:/opt/airflow/secrets:ro
     ports:
       - "8080:8080"
     networks:

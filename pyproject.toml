@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.115.8",
+    "google-cloud-storage>=3.14.1",
     "joblib==1.4.2",
     "numpy==2.2.3",
     "onnx==1.16.1",

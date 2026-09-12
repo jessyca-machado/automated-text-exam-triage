@@ -12,3 +12,4 @@ airflow/airflow.db
 airflow/.env
 airflow/__pycache__/
 *.db
+secrets/

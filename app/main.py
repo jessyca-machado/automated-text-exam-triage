@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
+from typing import Final
+
+from google.cloud import storage
+
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Final, AsyncIterator, cast
+from typing import AsyncIterator, cast
 
 import joblib
 from fastapi import FastAPI, HTTPException
@@ -44,6 +50,56 @@ REQUEST_LATENCY = Histogram(
     "Tempo de processamento das requisições da API em segundos.",
     labelnames=("method", "endpoint"),
 )
+
+LOCAL_MODEL_PATH: Final[Path] = (
+    ROOT / "artifacts" / "medical_abstracts_model.joblib"
+)
+
+MODEL_URI: Final[str | None] = os.getenv("MODEL_URI")
+
+
+def load_model() -> Pipeline:
+    """Carrega o modelo localmente ou a partir do Cloud Storage.
+
+    Returns:
+        Pipeline treinada.
+
+    Raises:
+        FileNotFoundError: Se o modelo não for encontrado.
+        ValueError: Se a URI do Cloud Storage for inválida.
+    """
+    model_uri = os.getenv("MODEL_URI")
+
+    if not model_uri:
+        if not MODEL_PATH.exists():
+            raise FileNotFoundError(
+                f"Modelo não encontrado: {MODEL_PATH}"
+            )
+
+        return cast(Pipeline, joblib.load(MODEL_PATH))
+
+    if not model_uri.startswith("gs://"):
+        raise ValueError(
+            "MODEL_URI deve utilizar o formato gs://bucket/objeto"
+        )
+
+    bucket_name, blob_name = model_uri[5:].split("/", 1)
+
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".joblib",
+        delete=False,
+    ) as temporary_file:
+        temporary_path = Path(temporary_file.name)
+
+    blob.download_to_filename(str(temporary_path))
+
+    logger.info("Modelo baixado do Cloud Storage: %s", model_uri)
+
+    return cast(Pipeline, joblib.load(temporary_path))
 
 
 class PredictionRequest(BaseModel):
@@ -91,7 +147,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             "Execute o treinamento antes de iniciar a API."
         )
 
-    model = cast(Pipeline, joblib.load(MODEL_PATH))
+    model = load_model()
 
     logger.info("Modelo carregado com sucesso: %s", MODEL_PATH)
 
