@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from typing import Final
 
-from google.cloud import storage
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, cast
+from typing import AsyncIterator
 
-import joblib
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from sklearn.pipeline import Pipeline
 
 import time
 from collections.abc import Awaitable, Callable
@@ -29,14 +25,16 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+from app.predictor import OnnxPredictor, Predictor, JoblibPredictor
 
 ROOT: Final[Path] = Path(__file__).resolve().parents[1]
 MODEL_PATH: Final[Path] = (
     ROOT / "artifacts" / "medical_abstracts_model.joblib"
 )
+MODEL_FORMAT = os.getenv("MODEL_FORMAT", "joblib").lower()
 
 logger = logging.getLogger(__name__)
-model: Pipeline | None = None
+model: Predictor | None = None
 
 
 REQUEST_COUNT = Counter(
@@ -58,48 +56,29 @@ LOCAL_MODEL_PATH: Final[Path] = (
 MODEL_URI: Final[str | None] = os.getenv("MODEL_URI")
 
 
-def load_model() -> Pipeline:
-    """Carrega o modelo localmente ou a partir do Cloud Storage.
+def load_predictor() -> Predictor:
+    """Carrega o preditor conforme o formato configurado.
 
     Returns:
-        Pipeline treinada.
+        Preditor pronto para inferência.
 
     Raises:
-        FileNotFoundError: Se o modelo não for encontrado.
-        ValueError: Se a URI do Cloud Storage for inválida.
+        ValueError: Se o formato configurado não for suportado.
+        FileNotFoundError: Se o modelo não existir.
     """
-    model_uri = os.getenv("MODEL_URI")
+    model_format = os.getenv("MODEL_FORMAT", "joblib").lower()
 
-    if not model_uri:
-        if not MODEL_PATH.exists():
-            raise FileNotFoundError(
-                f"Modelo não encontrado: {MODEL_PATH}"
-            )
+    if model_format == "onnx":
+        model_path = ROOT / "artifacts" / "medical_abstracts_model.onnx"
+        return OnnxPredictor(model_path)
 
-        return cast(Pipeline, joblib.load(MODEL_PATH))
+    if model_format == "joblib":
+        model_path = ROOT / "artifacts" / "medical_abstracts_model.joblib"
+        return JoblibPredictor(model_path)
 
-    if not model_uri.startswith("gs://"):
-        raise ValueError(
-            "MODEL_URI deve utilizar o formato gs://bucket/objeto"
-        )
-
-    bucket_name, blob_name = model_uri[5:].split("/", 1)
-
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-
-    with tempfile.NamedTemporaryFile(
-        suffix=".joblib",
-        delete=False,
-    ) as temporary_file:
-        temporary_path = Path(temporary_file.name)
-
-    blob.download_to_filename(str(temporary_path))
-
-    logger.info("Modelo baixado do Cloud Storage: %s", model_uri)
-
-    return cast(Pipeline, joblib.load(temporary_path))
+    raise ValueError(
+        f"Formato de modelo não suportado: {model_format}"
+    )
 
 
 class PredictionRequest(BaseModel):
@@ -147,7 +126,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             "Execute o treinamento antes de iniciar a API."
         )
 
-    model = load_model()
+    model = load_predictor()
 
     logger.info("Modelo carregado com sucesso: %s", MODEL_PATH)
 
@@ -261,7 +240,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
         )
 
     try:
-        prediction = model.predict([texto])[0]
+        prediction = model.predict(texto)
     except Exception as error:
         logger.exception("Erro ao classificar o laudo.")
         raise HTTPException(

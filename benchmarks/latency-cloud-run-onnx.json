@@ -1,0 +1,10 @@
+{
+  "url": "https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/predict",
+  "requests": 100,
+  "warmup_requests": 10,
+  "min_ms": 166.885,
+  "mean_ms": 173.961,
+  "median_ms": 171.603,
+  "p95_ms": 183.357,
+  "max_ms": 312.267
+}

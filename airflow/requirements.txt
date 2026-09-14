@@ -1,6 +1,9 @@
 google-cloud-storage
-kagglehub
 joblib==1.4.2
+kagglehub
 numpy==2.2.3
+onnx==1.16.1
+onnxruntime==1.20.1
 pandas==2.2.3
 scikit-learn==1.6.1
+skl2onnx==1.18.0
