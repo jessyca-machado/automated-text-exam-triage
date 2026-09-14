@@ -1,6 +1,8 @@
 # API de Inferência — Classificação de Laudos Médicos
 
-API HTTP desenvolvida com FastAPI para classificar textos de laudos médicos usando um modelo treinado com TF-IDF e regressão logística.
+API HTTP desenvolvida com FastAPI para classificar textos de laudos médicos
+por especialidade, utilizando um modelo treinado com TF-IDF e regressão
+logística e executado em produção com ONNX Runtime.
 
 Dado o texto de um laudo, a API retorna a categoria prevista pelo modelo.
 
@@ -10,26 +12,47 @@ Dado o texto de um laudo, a API retorna a categoria prevista pelo modelo.
 
 ## Modelo utilizado
 
-O modelo utiliza:
+O modelo é treinado utilizando:
 
 - `TfidfVectorizer`;
 - `LogisticRegression`;
 - Pipeline do scikit-learn;
-- Persistência em formato Joblib.
+- Exportação para ONNX;
+- Inferência com ONNX Runtime.
 
-O artefato utilizado pela API é:
+O pipeline original é salvo em formato Joblib:
 
 ```text
 artifacts/medical_abstracts_model.joblib
 ```
 
+Após o treinamento, o modelo é exportado para ONNX:
+
+```text
+artifacts/medical_abstracts_model.onnx
+```
+
+O modelo utilizado pela API em produção é o artefato ONNX publicado no Cloud Storage:
+
+```text
+gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_*.onnx
+```
+
+A API carrega o modelo durante a inicialização e utiliza a variável:
+
+```text
+MODEL_FORMAT=onnx
+```
+
 As categorias previstas são:
 
+```text
 - `neoplasms`;
 - `digestive`;
 - `nervous`;
 - `cardiovascular`;
 - `general`.
+```
 
 ## Endpoints
 
@@ -41,97 +64,6 @@ As categorias previstas são:
 | `GET` | `/docs` | — | Documentação interativa Swagger |
 | `GET` | `/openapi.json` | — | Esquema OpenAPI da API |
 
-## Classificação de um laudo
-
-O endpoint `/predict` recebe um corpo JSON com o campo obrigatório `texto`.
-
-### Requisição
-
-```bash
-curl -X POST \
-  https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "texto": "Paciente apresenta alterações no sistema cardiovascular."
-  }'
-```
-
-### Resposta
-
-```json
-{
-  "classificacao": "cardiovascular"
-}
-```
-
-A resposta pode conter uma das seguintes categorias:
-
-```text
-neoplasms
-digestive
-nervous
-cardiovascular
-general
-```
-
-## Health check
-
-Para verificar se a API está disponível:
-
-```bash
-curl https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/health
-```
-
-Resposta esperada:
-
-```json
-{
-  "status": "ok"
-}
-```
-
-## Métricas
-
-As métricas da API podem ser consultadas em:
-
-```bash
-curl https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/metrics
-```
-
-Entre as métricas disponíveis estão:
-
-```text
-api_requests_total
-api_request_duration_seconds
-```
-
-As métricas incluem:
-
-- Quantidade de requisições;
-- Método HTTP;
-- Endpoint;
-- Código de status;
-- Tempo de resposta.
-
-## Testar pelo Swagger
-
-1. Acesse:
-
-   https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/docs
-
-2. Expanda o endpoint `POST /predict`;
-3. Clique em **Try it out**;
-4. Informe o texto do laudo:
-
-```json
-{
-  "texto": "Paciente apresenta alterações no sistema cardiovascular."
-}
-```
-
-5. Clique em **Execute**;
-6. Consulte o resultado em **Response body**.
-
 ## Como rodar localmente
 
 Instale as dependências:
@@ -140,15 +72,28 @@ Instale as dependências:
 uv sync
 ```
 
-Caso o modelo ainda não exista, execute o treinamento:
+Prepare os dados, caso necessário:
+
+```bash
+uv run python scripts/prepare_dataset_medical_abstracts.py
+```
+
+Treine o modelo Joblib:
 
 ```bash
 uv run python model/train.py
 ```
 
-Inicie a API:
+Exporte o modelo para ONNX:
 
 ```bash
+uv run python scripts/export_model_onnx.py
+```
+
+Inicie a API utilizando ONNX Runtime:
+
+```bash
+MODEL_FORMAT=onnx \
 uv run uvicorn app.main:app \
   --host 0.0.0.0 \
   --port 8000
@@ -171,6 +116,14 @@ curl -X POST \
   }'
 ```
 
+Resposta esperada:
+
+```json
+{
+  "classificacao": "cardiovascular"
+}
+```
+
 ## Como executar com Docker
 
 Construa a imagem:
@@ -181,11 +134,12 @@ docker build \
   .
 ```
 
-Execute o container:
+Execute o container utilizando ONNX Runtime:
 
 ```bash
 docker run --rm \
   --name automated-text-exam-triage-api \
+  -e MODEL_FORMAT=onnx \
   -p 8000:8080 \
   automated-text-exam-triage:local
 ```
@@ -209,31 +163,44 @@ curl -X POST \
 
 ## Deploy no Google Cloud Run
 
-A API é publicada no Google Cloud Run utilizando uma imagem Docker armazenada no Artifact Registry.
+A API é publicada no Google Cloud Run utilizando uma imagem Docker armazenada
+no Artifact Registry.
 
-Arquitetura utilizada:
+Em produção, o Cloud Run utiliza o modelo ONNX publicado no Cloud Storage:
 
 ```text
-Dockerfile
+Cloud Storage
     │
     ▼
-Artifact Registry
+Modelo ONNX versionado
     │
     ▼
-Google Cloud Run
+Cloud Run
     │
     ▼
-FastAPI
-    │
-    ▼
-Modelo Joblib
+FastAPI + ONNX Runtime
 ```
 
-Para obter a URL do serviço:
+A configuração atual utiliza:
+
+```text
+MODEL_FORMAT=onnx
+MODEL_URI=gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_*.onnx
+```
+
+A aplicação está disponível em:
+
+- **API:** https://medical-exam-api-ppsmoa2pqq-uc.a.run.app
+- **Swagger:** https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/docs
+- **Health check:** https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/health
+- **Métricas:** https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/metrics
+
+Para obter a URL atual do serviço:
 
 ```bash
 gcloud run services describe medical-exam-api \
-  --region us-central1 \
+  --project=quantum-balm-260822 \
+  --region=us-central1 \
   --format="value(status.url)"
 ```
 
@@ -241,41 +208,43 @@ Para consultar os logs:
 
 ```bash
 gcloud run services logs read medical-exam-api \
-  --region us-central1 \
+  --project=quantum-balm-260822 \
+  --region=us-central1 \
   --limit 50
 ```
 
-## Benchmark de latência
+## Otimização de inferência
 
-O projeto possui um script para medir a latência do endpoint `/predict`:
+O modelo é treinado originalmente com scikit-learn utilizando TF-IDF e regressão logística.
 
-```bash
-uv run python scripts/measure_latency.py \
-  --url https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/predict \
-  --warmup 10 \
-  --requests 100 \
-  --output artifacts/latency-cloud-run.json
+O pipeline treinado é salvo em formato Joblib:
+
+```text
+artifacts/medical_abstracts_model.joblib
 ```
 
-O benchmark calcula:
+Depois, o pipeline é exportado para ONNX:
 
-- Latência mínima;
-- Latência média;
-- Mediana;
-- Percentil 95 (`P95`);
-- Latência máxima.
+```text
+artifacts/medical_abstracts_model.onnx
+```
 
-## Comparação entre Joblib e ONNX Runtime
+A API em produção utiliza ONNX Runtime para executar as inferências.
 
-O modelo original é salvo em formato Joblib. Também existe uma versão exportada para ONNX Runtime para comparação de latência.
+O modelo Joblib permanece como:
 
-Exporte o modelo para ONNX:
+- artefato intermediário do treinamento;
+- referência para validação;
+- fallback;
+- origem da exportação para ONNX.
+
+### Exportar o modelo
 
 ```bash
 uv run python scripts/export_model_onnx.py
 ```
 
-Compare os modelos:
+### Comparar os modelos
 
 ```bash
 uv run python scripts/compare_model_latency.py \
@@ -283,95 +252,102 @@ uv run python scripts/compare_model_latency.py \
   --requests 100
 ```
 
-A comparação valida se os dois modelos retornam a mesma classificação antes de medir o tempo de inferência.
+A comparação valida se o Joblib e o ONNX retornam a mesma classificação antes
+de medir a latência.
 
-Resultado obtido:
+### Benchmark local de inferência
 
 | Modelo | Requisições | Mínimo (ms) | Média (ms) | Mediana (ms) | P95 (ms) | Máximo (ms) |
 |---|---:|---:|---:|---:|---:|---:|
 | Joblib/scikit-learn | 100 | 3,305 | 3,427 | 3,422 | 3,557 | 3,624 |
 | ONNX Runtime | 100 | 1,908 | 2,114 | 2,133 | 2,258 | 2,315 |
 
-O modelo ONNX Runtime apresentou redução aproximada de:
+Considerando a latência média:
 
-- **38,31% na latência média**;
-- **36,53% na latência P95**.
+- Joblib/scikit-learn: **3,427 ms**;
+- ONNX Runtime: **2,114 ms**;
+- Redução média: **38,31%**;
+- Ganho de velocidade: aproximadamente **1,62x**.
 
-## Monitoramento local
+### Benchmark no Cloud Run
 
-A API, o Prometheus, o Grafana e o Airflow podem ser executados juntos com Docker Compose:
+Foram realizadas 100 requisições ao endpoint `/predict`, após 10 requisições
+de aquecimento. Todas as requisições retornaram `HTTP 200`.
 
-```bash
-docker compose up --build -d
-```
+| Métrica | Valor |
+|---|---:|
+| Requisições | 100 |
+| Aquecimento | 10 |
+| Latência mínima | 166,885 ms |
+| Latência média | 173,961 ms |
+| Mediana | 171,603 ms |
+| P95 | 183,357 ms |
+| Latência máxima | 312,267 ms |
 
-Serviços disponíveis:
-
-- API: http://localhost:8000
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
-- Airflow: http://localhost:8080
-
-Credenciais padrão do Grafana:
+O resultado foi salvo em:
 
 ```text
-Usuário: admin
-Senha: admin
+benchmarks/latency-cloud-run-onnx.json
 ```
 
-Para gerar tráfego e popular os gráficos:
+A latência do Cloud Run inclui a comunicação HTTP, rede, FastAPI, middleware, serialização da resposta, infraestrutura do Cloud Run e inferência com ONNX Runtime. Por isso, ela não deve ser comparada diretamente com a latência isolada da inferência local.
+
+## Orquestração com Airflow
+
+O Airflow executa mensalmente o fluxo de ingestão, treinamento, exportação e
+deploy do modelo:
+
+```text
+ingest_data
+    ↓
+train_model
+    ↓
+export_model_onnx
+    ↓
+publish_model
+    ↓
+Cloud Run
+```
+
+A DAG:
+
+1. Baixa e prepara os dados;
+2. Treina o modelo Joblib;
+3. Exporta o modelo para ONNX;
+4. Publica o modelo ONNX no Cloud Storage;
+5. Atualiza a variável `MODEL_URI`;
+6. Configura `MODEL_FORMAT=onnx`;
+7. Cria uma nova revisão no Cloud Run.
+
+A execução ocorre no primeiro dia de cada mês, às 2h, no fuso
+`America/Sao_Paulo`.
+
+Para iniciar o Airflow:
 
 ```bash
-uv run python scripts/generate_traffic.py \
-  --url http://localhost:8000/predict \
-  --requests 200
+docker compose up --build -d airflow
 ```
 
-Para verificar os serviços:
+A interface está disponível em:
 
-```bash
-docker compose ps
+```text
+http://localhost:8080
 ```
 
-Para visualizar os logs:
+Mais informações:
 
-```bash
-docker compose logs -f
-```
-
-Para encerrar os serviços:
-
-```bash
-docker compose down
-```
-
-## Monitoramento no Google Cloud
-
-No ambiente local, Prometheus e Grafana são utilizados para visualizar as métricas da API.
-
-No Google Cloud Run, podem ser utilizados:
-
-- Cloud Monitoring;
-- Cloud Logging;
-- Cloud Trace;
-- Managed Service for Prometheus.
-
-Para consultar os logs do serviço:
-
-```bash
-gcloud run services logs read medical-exam-api \
-  --region us-central1 \
-  --limit 50
-```
+[Documentação completa do Airflow](docs/AIRFLOW.md)
 
 ## Observações
 
 - A API pública utiliza o Google Cloud Run;
+- O modelo de produção é executado com ONNX Runtime;
+- O modelo Joblib é utilizado como artefato intermediário e fallback;
+- O modelo ONNX é versionado no Cloud Storage;
+- O Airflow executa mensalmente o retreinamento e o deploy do modelo;
 - A primeira requisição pode apresentar maior latência devido ao cold start;
 - O modelo é carregado em memória durante a inicialização da aplicação;
 - O endpoint `/predict` recebe o texto no corpo JSON;
-- O modelo Joblib é utilizado pela API principal;
-- O modelo ONNX Runtime foi utilizado para comparação de latência;
 - Prometheus e Grafana são utilizados para monitoramento local;
 - O Cloud Run utiliza métricas nativas do Google Cloud;
-- O modelo atual classifica categorias médicas, não níveis de urgência.
+- O modelo atual classifica especialidades médicas, não níveis de urgência.
