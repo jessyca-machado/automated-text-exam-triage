@@ -18,9 +18,11 @@
 
 ## Contexto
 
-O projeto tem como objetivo construir um sistema de classificação automática de laudos médicos textuais, classificando cada exame de acordo com sua **especialidade médica**.
+O projeto tem como objetivo construir um sistema de classificação automática de
+laudos médicos textuais, classificando cada exame de acordo com sua
+**especialidade médica**.
 
-A API classifica as categorias que representam especialidades ou grupos médicos:
+A API classifica as categorias retornadas representam especialidades ou grupos médicos:
 
 - `neoplasms`;
 - `digestive`;
@@ -28,9 +30,22 @@ A API classifica as categorias que representam especialidades ou grupos médicos
 - `cardiovascular`;
 - `general`.
 
-O sistema utiliza um classificador de texto NLP leve, baseado em TF-IDF e regressão logística, com foco não apenas na qualidade da classificação, mas também na construção de um ciclo de vida completo de Machine Learning, incluindo treinamento, retreinamento, deploy, monitoramento, CI/CD e otimização de latência.
+O sistema utiliza um classificador de texto NLP baseado em TF-IDF e regressão
+logística. O treinamento é realizado com scikit-learn e o modelo é exportado
+para ONNX Runtime para otimização da inferência em produção.
 
-Para isso, será adotada uma **arquitetura híbrida**, combinando inferência **real-time** e processamento **batch**.
+O projeto também contempla:
+
+- treinamento e retreinamento periódico;
+- exportação do modelo para ONNX;
+- deploy no Google Cloud Run;
+- monitoramento com Prometheus e Grafana;
+- orquestração com Airflow;
+- testes automatizados;
+- CI/CD com GitHub Actions;
+- benchmark de latência.
+
+A arquitetura combina inferência **real-time** e processamento **batch**.
 
 ---
 
@@ -38,17 +53,19 @@ Para isso, será adotada uma **arquitetura híbrida**, combinando inferência **
 
 ### Decisão entre Batch e Real-Time
 
-A inferência principal será realizada em **real-time**, por meio de uma API REST executada no **Google Cloud Run**.
+A inferência principal é realizada em **real-time**, por meio de uma API REST
+executada no **Google Cloud Run**.
 
-Essa escolha é motivada pela necessidade de classificar imediatamente a especialidade médica associada a um laudo recebido pelo sistema.
+O modelo ONNX é carregado durante a inicialização da aplicação e executado com ONNX Runtime,
+evitando o custo de carregar e converter o modelo a cada requisição.
 
-O fluxo esperado é:
+O fluxo de inferência é:
 
 ```mermaid
 flowchart LR
     A[Laudo médico] --> B[Cloud Run<br/>FastAPI]
     B --> C[Pré-processamento]
-    C --> D[Modelo NLP]
+    C --> D[ONNX Runtime]
     D --> E{Especialidade}
     E --> F[Neoplasms]
     E --> G[Digestive]
@@ -57,84 +74,91 @@ flowchart LR
     E --> J[General]
 ```
 
-O modelo será carregado em memória durante a inicialização da aplicação, evitando o custo de carregar o artefato do modelo a cada requisição.
+O processamento **batch** é utilizado nas etapas em que a resposta imediata não é necessária:
 
-O processamento **batch**, por outro lado, será utilizado nas etapas em que a resposta imediata não é necessária:
-* retreinamento periódico;
-* avaliação de novas versões do modelo;
-* análise de drift;
-* reprocessamento de laudos;
-* geração de métricas offline;
-* inferência sobre grandes volumes de dados.
+- retreinamento periódico;
+- avaliação de novas versões do modelo;
+- exportação para ONNX;
+- análise de drift;
+- reprocessamento de laudos;
+- geração de métricas offline;
+- inferência sobre grandes volumes de dados.
 
-> **Real-time será utilizado para inferência operacional, enquanto batch será utilizado para operações de treinamento, avaliação, monitoramento e processamento histórico.**
+> Real-time é utilizado para a classificação operacional das especialidades,
+> enquanto batch é utilizado para treinamento, avaliação, versionamento e
+> processamento histórico.
 
----
+### Estratégia de Deploy em Nuvem: GCP
 
-### Estratégia de Deploy em Nuvem Escolhida: GCP
+O serving da aplicação é realizado pelo **Google Cloud Run**, que executa o container Docker
+da API FastAPI.
 
-Para este projeto, será utilizada a **Google Cloud Platform (GCP)**.
-
-O serving da aplicação será realizado pelo Cloud Run, que executará o mesmo container Docker da API FastAPI. Essa escolha é adequada ao modelo utilizado, baseado em TF-IDF e regressão logística, pois se trata de um modelo leve, sem necessidade de GPU ou de uma plataforma especializada de serving.
-
-A arquitetura proposta utiliza:
-```mermaid
-flowchart LR
-    A[GitHub Actions<br/>CI/CD] --> B[Imagem Docker]
-    B --> C[Google Artifact Registry]
-    C --> D[Cloud Run<br/>FastAPI]
-    D --> E[Classificação<br/>Especialidade]
-
-    F[Cloud Scheduler] --> G[Cloud Run Jobs]
-    G --> H[Cloud Storage]
-    G --> I[Resultados batch]
-```
-
-O **Cloud Run** será considerado o mecanismo principal para disponibilização da API de inferência real-time.
-
-O **Artifact Registry** será utilizado para armazenar as imagens Docker produzidas pelo pipeline de CI/CD.
-
-O **Cloud Storage** será utilizado para armazenar: datasets, artefatos de treinamento, modelos versionados, resultados de inferência batch, métricas e relatórios offline.
-
-Essa escolha também mantém aberta a possibilidade de utilizar posteriormente o **Vertex AI Endpoint** caso surjam requisitos de MLOps mais avançados.
-
----
-
-### Retreinamento e Processamento Batch
-
-O **Airflow** será responsável pela orquestração dos processos periódicos.
-
-Um DAG de retreinamento seguirá o fluxo:
+O modelo Joblib é gerado durante o treinamento e utilizado como artefato intermediário.
+Após o treinamento, ele é convertido para ONNX e publicado no Cloud Storage.
+A API em produção carrega o modelo ONNX usando ONNX Runtime.
 
 ```mermaid
 flowchart LR
-    A[Cloud Scheduler] --> B[Cloud Run Job]
-    B --> C[Coleta dos dados]
-    C --> D[Validação]
-    D --> E[Pré-processamento]
-    E --> F[Treinamento]
-    F --> G[Avaliação]
-    G --> H[Validação das métricas]
-    H --> I[Versionamento do modelo]
-    I --> J[Cloud Storage]
-    J --> K[Deploy no Cloud Run]
+    A[Airflow] --> B[Ingestão]
+    B --> C[Treinamento scikit-learn]
+    C --> D[Exportação ONNX]
+    D --> E[Cloud Storage]
+    E --> F[Cloud Run<br/>FastAPI + ONNX Runtime]
+    F --> G[Classificação de especialidade]
 ```
 
-O processamento batch também será utilizado para executar inferência sobre grandes conjuntos de laudos quando a resposta imediata não for necessária.
+Os componentes utilizados são:
+
+- **Cloud Run:** serving da API em tempo real;
+- **Artifact Registry:** armazenamento da imagem Docker;
+- **Cloud Storage:** armazenamento dos modelos versionados;
+- **Airflow:** orquestração do retreinamento;
+- **Prometheus e Grafana:** monitoramento local;
+- **GitHub Actions:** testes e lint;
+- **ONNX Runtime:** inferência otimizada.
+
+---
+
+### Retreinamento e processamento batch
+
+O Airflow executa mensalmente o fluxo:
+
+```mermaid
+flowchart LR
+    A[Ingestão] --> B[Treinamento Joblib]
+    B --> C[Exportação ONNX]
+    C --> D[Cloud Storage]
+    D --> E[Atualização do Cloud Run]
+    E --> F[Nova revisão da API]
+```
+
+A DAG executa as seguintes tasks:
+
+```text
+ingest_data
+    ↓
+train_model
+    ↓
+export_model_onnx
+    ↓
+publish_model
+    ↓
+Cloud Run
+```
 
 ---
 
 ### CI/CD
 
-O GitHub Actions será responsável pela automação do ciclo de entrega.
+O GitHub Actions executa automaticamente:
 
-Dessa forma, alterações no código de inferência ou no pipeline de ML poderão ser validadas automaticamente antes de chegarem ao ambiente de produção.
+- testes com `pytest`;
+- lint com `ruff`;
+- validações do código a cada `push`.
 
 ---
 
-### Arquitetura Final Proposta
-
-A arquitetura inicial pode ser resumida da seguinte maneira:
+### Arquitetura final
 
 ```text
                          ┌─────────────────┐
@@ -153,6 +177,7 @@ A arquitetura inicial pode ser resumida da seguinte maneira:
                         │ Google Cloud Run  │
                         │                   │
                         │ FastAPI / HTTP    │
+                        │ ONNX Runtime     │
                         └─────────┬─────────┘
                                   │
                              POST /predict
@@ -167,46 +192,48 @@ A arquitetura inicial pode ser resumida da seguinte maneira:
                     neoplasms / digestive / nervous
                     cardiovascular / general
 
-
         ┌───────────────────────────────────────────────┐
-        │                 MLOps                         │
+        │                    MLOps                      │
         │                                               │
-        │ Cloud Scheduler → Cloud Run Jobs              │
+        │ Airflow → Ingestão → Treinamento              │
         │                                               │
-        │ Treinamento → Avaliação → Versionamento       │
+        │ Exportação ONNX → Cloud Storage               │
         │                                               │
-        │ Cloud Storage → Modelos e datasets            │
+        │ Cloud Storage → Cloud Run                     │
         │                                               │
-        │ Cloud Run Jobs → Inferência offline           │
+        │ Prometheus + Grafana → Monitoramento local    │
         │                                               │
-        │ Cloud Monitoring → Métricas e alertas         │
-        │                                               │
-        │ BigQuery → Análises históricas, se necessário │
+        │ Cloud Monitoring → Métricas de infraestrutura │
         └───────────────────────────────────────────────┘
 ```
 
 ### Resumo da decisão
 
-| Componente                       | Decisão                           |
-| ------------------------------   | --------------------------------- |
-| Inferência operacional           | **Real-time**                     |
-| Processamento histórico          | **Batch**                         |
-| API                              | **FastAPI / REST**                |
-| Containerização                  | **Docker**                        |
-| Cloud                            | **Google Cloud Platform**         |
-| Serving                          | **Cloud Run Real-Time Inference** |
-| Registry de imagens              | **Artifact Registry**             |
-| Armazenamento de dados e modelos | **Cloud Storage**                 |
-| Processamento batch              | **Cloud Run Jobs**                |
-| Orquestração                     | **Airflow**                       |
-| CI/CD                            | **GitHub Actions**                |
-| Monitoramento                    | **Prometheus + Grafana**          |
-| Modelo inicial                   | **TF-IDF + regressão logístic**   |
-| Principal requisito de serving   | **Baixa latência**                |
+| Componente | Decisão |
+|---|---|
+| Inferência operacional | **Real-time** |
+| Tipo de classificação | **Especialidade médica** |
+| Processamento histórico | **Batch** |
+| API | **FastAPI / REST** |
+| Containerização | **Docker** |
+| Cloud | **Google Cloud Platform** |
+| Serving | **Cloud Run** |
+| Runtime de inferência | **ONNX Runtime** |
+| Modelo de treinamento | **TF-IDF + regressão logística** |
+| Artefato de treinamento | **Joblib** |
+| Artefato de produção | **ONNX** |
+| Registry de imagens | **Artifact Registry** |
+| Armazenamento de modelos | **Cloud Storage** |
+| Processamento batch | **Airflow** |
+| CI/CD | **GitHub Actions** |
+| Monitoramento local | **Prometheus + Grafana** |
+| Principal requisito de serving | **Baixa latência** |
 
-A decisão final é, portanto, adotar uma **arquitetura híbrida no GCP**, utilizando **real-time inference para a classificação operacional das especialidades dos laudos** e **batch processing para treinamento, avaliação, reprocessamento e análises offline**.
+A decisão final é adotar uma arquitetura híbrida no GCP, utilizando real-time
+inference para a classificação das especialidades dos laudos e batch processing
+para treinamento, avaliação, exportação, versionamento e análises offline.
 
-Essa arquitetura atende simultaneamente aos requisitos funcionais do sistema de triagem e aos objetivos de MLOps do projeto, mantendo a solução simples o suficiente para ser implementada, testada e observada de ponta a ponta.
+---
 
 ## Execução do projeto
 
@@ -221,7 +248,7 @@ uv sync
 ### Preparar os dados
 
 ```bash
-uv run python scripts/prepare_medical_abstracts.py
+uv run python scripts/prepare_dataset_medical_abstracts.py
 ```
 
 Esse comando gera:
@@ -236,16 +263,33 @@ data/laudos.csv
 uv run python model/train.py
 ```
 
-O modelo será salvo em:
+O modelo Joblib será salvo em:
 
 ```text
 artifacts/medical_abstracts_model.joblib
 ```
 
-### Executar a API localmente
+### Exportar o modelo para ONNX
 
 ```bash
-uv run uvicorn app.main:app --reload
+uv run python scripts/export_model_onnx.py
+```
+
+O modelo ONNX será salvo em:
+
+```text
+artifacts/medical_abstracts_model.onnx
+```
+
+### Executar a API localmente
+
+Para utilizar o modelo ONNX localmente:
+
+```bash
+MODEL_FORMAT=onnx \
+uv run uvicorn app.main:app \
+  --host 127.0.0.1 \
+  --port 8000
 ```
 
 A API estará disponível em:
@@ -277,7 +321,9 @@ Resposta esperada:
 Construa a imagem:
 
 ```bash
-docker build -t automated-text-exam-triage:local .
+docker build \
+  -t automated-text-exam-triage:local \
+  .
 ```
 
 Execute o container:
@@ -285,6 +331,7 @@ Execute o container:
 ```bash
 docker run --rm \
   --name automated-text-exam-triage-api \
+  -e MODEL_FORMAT=onnx \
   -p 8000:8080 \
   automated-text-exam-triage:local
 ```
@@ -301,24 +348,12 @@ http://localhost:8000
 uv run pytest
 ```
 
-O GitHub Actions, no push, roda lint (ruff) e pytest.
+O GitHub Actions executa automaticamente:
 
-### Medir a latência
+- lint com `ruff`;
+- testes com `pytest`.
 
-Com a API em execução:
-
-```bash
-uv run python scripts/measure_latency.py
-```
-
-Para salvar os resultados:
-
-```bash
-uv run python scripts/measure_latency.py \
-  --output artifacts/latency-docker.json
-```
-
-O benchmark informa a latência mínima, média, mediana, P95 e máxima.
+---
 
 ## Monitoramento
 
@@ -329,10 +364,11 @@ docker compose up --build -d
 ```
 
 Serviços disponíveis:
-- API: http://localhost:8000
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
-- Airflow: http://localhost:8080
+
+- API: http://localhost:8000;
+- Prometheus: http://localhost:9090;
+- Grafana: http://localhost:3000;
+- Airflow: http://localhost:8080.
 
 Credenciais padrão do Grafana:
 
@@ -341,26 +377,60 @@ Usuário: admin
 Senha: admin
 ```
 
-Para popular os graficos:
+Para popular os gráficos:
 
 ```bash
-uv run python scripts/generate_traffic.py --requests 200
+uv run python scripts/generate_traffic.py \
+  --url http://localhost:8000/predict \
+  --requests 200
 ```
 
-será possível visualizar os painéis: Total de requisições, Latência média e P95, Taxa de erros HTTP 5xx e Requisições agrupadas por status HTTP.
+Os painéis apresentam:
+
+- total de requisições;
+- latência média;
+- latência P95;
+- taxa de erros HTTP 5xx;
+- requisições agrupadas por status HTTP.
+
+---
 
 ## Otimização de inferência
 
-O modelo treinado originalmente em scikit-learn é salvo em formato Joblib.
-Também é realizada uma exportação para ONNX, executada com ONNX Runtime.
+O modelo é treinado originalmente com scikit-learn utilizando:
 
-Para exportar o modelo:
+```text
+TF-IDF + Logistic Regression
+```
+
+O pipeline treinado é salvo em Joblib:
+
+```text
+artifacts/medical_abstracts_model.joblib
+```
+
+Em seguida, o modelo é exportado para ONNX e executado com ONNX Runtime:
+
+```text
+artifacts/medical_abstracts_model.onnx
+```
+
+O modelo ONNX é utilizado pela API em produção.
+
+O modelo Joblib permanece como:
+
+- artefato intermediário do treinamento;
+- referência para validação;
+- fallback;
+- base para exportação ONNX.
+
+### Exportar o modelo
 
 ```bash
 uv run python scripts/export_model_onnx.py
 ```
 
-### Comparação de latência
+### Comparar os modelos
 
 ```bash
 uv run python scripts/compare_model_latency.py \
@@ -368,30 +438,64 @@ uv run python scripts/compare_model_latency.py \
   --requests 100
 ```
 
-A comparação valida se o modelo Joblib e o modelo ONNX retornam a mesma classificação antes de medir o tempo de inferência.
-Foram realizadas 100 inferências em cada modelo.
+A comparação valida se o modelo Joblib e o modelo ONNX retornam a mesma
+classificação antes de medir o tempo de inferência.
+
+### Benchmark local
+
+Foram realizadas 100 inferências em cada modelo:
 
 | Modelo | Requisições | Mínimo (ms) | Média (ms) | Mediana (ms) | P95 (ms) | Máximo (ms) |
 |---|---:|---:|---:|---:|---:|---:|
-| Joblib/scikit-learn | 100 | 3,365 | 3,566 | 3,508 | 3,827 | 4,06 |
+| Joblib/scikit-learn | 100 | 3,365 | 3,566 | 3,508 | 3,827 | 4,060 |
 | ONNX Runtime | 100 | 1,879 | 1,935 | 1,919 | 2,017 | 2,095 |
-
-### Resultado
-
-O modelo executado com ONNX Runtime apresentou menor latência em todas as métricas analisadas.
 
 Considerando a latência média:
 
-- Joblib/scikit-learn: **3,566 ms**
-- ONNX Runtime: **1.935 ms**
-- Redução média: **45,74%**
-- Ganho de velocidade: aproximadamente **1,84x**
+- Joblib/scikit-learn: **3,566 ms**;
+- ONNX Runtime: **1,935 ms**;
+- Redução média: **45,74%**;
+- Ganho de velocidade: aproximadamente **1,84x**.
 
-O modelo ONNX é utilizado para avaliação de desempenho. A API principal utiliza o artefato Joblib treinado.
+### Benchmark no Cloud Run
+
+Foram realizadas 100 requisições ao endpoint `/predict`, após 10 requisições
+de aquecimento. Todas as requisições retornaram `HTTP 200`.
+
+| Métrica | Valor |
+|---|---:|
+| Requisições | 100 |
+| Latência mínima | 166,885 ms |
+| Latência média | 173,961 ms |
+| Mediana | 171,603 ms |
+| P95 | 183,357 ms |
+| Latência máxima | 312,267 ms |
+
+O resultado foi salvo em:
+
+```text
+benchmarks/latency-cloud-run-onnx.json
+```
+
+A latência no Cloud Run inclui:
+
+- comunicação HTTP;
+- rede;
+- processamento da API;
+- middleware;
+- serialização da resposta;
+- inferência com ONNX Runtime;
+- infraestrutura do Cloud Run.
+
+Por isso, ela não deve ser comparada diretamente com a latência isolada da inferência local.
+
+---
 
 ## Deploy no GCP
 
 A API foi publicada no **Google Cloud Run** utilizando uma imagem Docker armazenada no **Artifact Registry**.
+
+A aplicação utiliza o modelo ONNX publicado no Cloud Storage.
 
 A aplicação está disponível em:
 
@@ -400,28 +504,68 @@ A aplicação está disponível em:
 - **Health check:** https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/health
 - **Métricas:** https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/metrics
 
-O serviço disponibiliza classificação de laudos médicos por especialidade por meio do endpoint `POST /predict`.
+O serviço disponibiliza classificação de laudos médicos por especialidade por
+meio do endpoint `POST /predict`.
 
-Para consultar detalhes sobre a arquitetura, endpoints, exemplos de uso, execução local, Docker e benchmark de latência, acesse:
+A configuração atual do Cloud Run utiliza:
+
+```text
+MODEL_FORMAT=onnx
+MODEL_URI=gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_*.onnx
+```
+
+### Testar a API publicada
+
+```bash
+curl -X POST \
+  https://medical-exam-api-ppsmoa2pqq-uc.a.run.app/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texto": "Paciente apresenta alterações no sistema cardiovascular."
+  }'
+```
+
+Resposta esperada:
+
+```json
+{
+  "classificacao": "cardiovascular"
+}
+```
+
+Para consultar detalhes sobre a arquitetura, endpoints, exemplos de uso,
+execução local, Docker e benchmark de latência, acesse:
 
 [Documentação completa da API](docs/API.md)
+
+---
 
 ## Orquestração com Airflow
 
 O Airflow orquestra mensalmente:
 
 1. A ingestão dos dados;
-2. O retreinamento do modelo;
-3. A publicação do modelo no Cloud Storage;
-4. A atualização do serviço no Cloud Run.
+2. O retreinamento do modelo Joblib;
+3. A exportação do modelo para ONNX;
+4. A publicação do modelo no Cloud Storage;
+5. A atualização do serviço no Cloud Run.
 
 O fluxo executado pela DAG é:
 
 ```text
-ingest_data → train_model → publish_model
+ingest_data
+    ↓
+train_model
+    ↓
+export_model_onnx
+    ↓
+publish_model
+    ↓
+Cloud Run
 ```
 
-A DAG é executada no primeiro dia de cada mês, às 2h, no fuso America/Sao_Paulo.
+A DAG é executada no primeiro dia de cada mês, às 2h, no fuso
+`America/Sao_Paulo`.
 
 Para iniciar o Airflow localmente:
 
