@@ -393,6 +393,8 @@ Os painéis apresentam:
 - taxa de erros HTTP 5xx;
 - requisições agrupadas por status HTTP.
 
+[Prints do dashboard Grafana e do Prometheus](docs/monitoring.md)
+
 ---
 
 ## Otimização de inferência
