@@ -47,6 +47,12 @@ O projeto também contempla:
 
 A arquitetura combina inferência **real-time** e processamento **batch**.
 
+Video STAR: https://youtu.be/Uo1N9Vri5FI
+
+Arquivo do vídeo no repositório: [star_video_exam_triage.mp4](docs/star_video_exam_triage.mp4)
+
+Dados da entrega: [link_entrega.txt](link_entrega.txt)
+
 ---
 
 ## Arquitetura
