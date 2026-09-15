@@ -1,14 +1,12 @@
-# Airflow — Ingestão e Retreinamento
+# Airflow — Ingestão, Retreinamento, Exportação e Deploy
 
-O Airflow orquestra mensalmente o processo de ingestão dos dados, retreinamento
-do modelo e atualização da API no Google Cloud Run.
-
-> O modelo atual classifica especialidades médicas.
+O Airflow orquestra mensalmente o processo de ingestão dos dados, retreinamento do modelo,
+exportação para ONNX e atualização da API no Google Cloud Run.
 
 ## Fluxo da DAG
 
 ```text
-ingest_data → train_model → publish_model
+ingest_data → train_model → export_model_onnx → publish_model
 ```
 
 ### `ingest_data`
@@ -46,27 +44,53 @@ Essa etapa:
 2. Divide os dados em treino e teste;
 3. Treina o pipeline TF-IDF + regressão logística;
 4. Avalia o modelo;
-5. Salva o artefato em:
+5. Salva o artefato Joblib em:
 
 ```text
 artifacts/medical_abstracts_model.joblib
 ```
 
-### `train_model`
+### `export_model_onnx`
+
+A task reutiliza o script:
+
+```text
+scripts/export_model_onnx.py
+```
+
+Essa etapa:
+
+1. Carrega o modelo Joblib treinado;
+2. Exporta o pipeline para ONNX;
+3. Salva o modelo otimizado em:
+
+```text
+artifacts/medical_abstracts_model.onnx
+```
+
+### `publish_model`
 
 Essa task:
 
-1. Envia o modelo treinado para o Cloud Storage;
+1. Envia o modelo ONNX para o Cloud Storage;
 2. Cria uma versão identificável do artefato;
-3. Atualiza a variável MODEL_URI do Cloud Run;
+3. Atualiza as variáveis `MODEL_URI`, `MODEL_FORMAT` e `MODEL_VERSION` do Cloud Run;
 4. Cria uma nova revisão do serviço;
 5. Direciona o tráfego para a nova revisão.
 
 O modelo é publicado em um caminho semelhante a:
 
 ```text
-gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_20260912003343.joblib
+gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_20260914191113.onnx
 ```
+
+A API utiliza:
+
+```text
+MODEL_FORMAT=onnx
+```
+
+e executa o modelo com ONNX Runtime.
 
 ## Agendamento
 
@@ -97,7 +121,8 @@ airflow/
 └── requirements.txt
 
 scripts/
-└── prepare_dataset_medical_abstracts.py
+├── prepare_dataset_medical_abstracts.py
+└── export_model_onnx.py
 
 model/
 └── train.py
@@ -106,7 +131,8 @@ data/
 └── laudos.csv
 
 artifacts/
-└── medical_abstracts_model.joblib
+├── medical_abstracts_model.joblib
+└── medical_abstracts_model.onnx
 ```
 
 ## Pré-requisitos
@@ -117,6 +143,7 @@ artifacts/
 - Google Cloud CLI;
 - Bucket no Cloud Storage;
 - Serviço publicado no Cloud Run;
+- Repositório no Artifact Registry;
 - Conta de serviço para o Airflow.
 
 ## Configuração do GCP
@@ -149,26 +176,6 @@ A conta de execução do Cloud Run precisa possuir permissão para ler o modelo:
 
 ```text
 roles/storage.objectViewer
-```
-
-## Credenciais do Airflow
-
-A chave da conta de serviço deve estar no arquivo:
-
-```text
-secrets/airflow-deployer.json
-```
-
-Ajuste as permissões:
-
-```bash
-chmod 600 secrets/airflow-deployer.json
-```
-
-O arquivo deve ser montado no container em:
-
-```text
-/opt/airflow/secrets/airflow-deployer.json
 ```
 
 ## Iniciar o Airflow
@@ -216,7 +223,8 @@ Na interface do Airflow:
 1. Localize a DAG `train_medical_abstracts_model`;
 2. Ative a DAG, caso esteja pausada;
 3. Consulte o próximo agendamento;
-4. Acompanhe as tasks `ingest_data`, `train_model` e `publish_model`.
+4. Acompanhe as tasks `ingest_data`, `train_model`,
+   `export_model_onnx` e `publish_model`.
 
 ## Verificar a DAG pelo terminal
 
@@ -304,6 +312,12 @@ gcloud storage ls \
   gs://quantum-balm-260822-medical-models/models/
 ```
 
+A saída deve conter arquivos `.onnx`, por exemplo:
+
+```text
+gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_20260914191113.onnx
+```
+
 ## Testar o acesso ao Artifact Registry
 
 ```bash
@@ -346,15 +360,16 @@ Para testar a DAG sem aguardar o agendamento mensal:
 docker compose exec airflow \
   airflow dags test \
   train_medical_abstracts_model \
-  2026-09-15
+  2026-09-17
 ```
 
 A execução esperada é:
 
 ```text
-ingest_data      SUCCESS
-train_model      SUCCESS
-publish_model    SUCCESS
+ingest_data        SUCCESS
+train_model        SUCCESS
+export_model_onnx  SUCCESS
+publish_model      SUCCESS
 ```
 
 Para disparar uma execução normal:
@@ -377,6 +392,7 @@ Depois de uma execução bem-sucedida:
 ```bash
 ls -lh data/laudos.csv
 ls -lh artifacts/medical_abstracts_model.joblib
+ls -lh artifacts/medical_abstracts_model.onnx
 ```
 
 Verifique o modelo publicado no Cloud Storage:
@@ -388,7 +404,7 @@ gcloud storage ls \
 
 ## Verificar o modelo utilizado pelo Cloud Run
 
-Consulte a variável `MODEL_URI`:
+Consulte as variáveis de ambiente:
 
 ```bash
 gcloud run services describe medical-exam-api \
@@ -401,7 +417,11 @@ A saída deve conter algo semelhante a:
 
 ```yaml
 - name: MODEL_URI
-  value: gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_20260912003343.joblib
+  value: gs://quantum-balm-260822-medical-models/models/medical_abstracts_model_20260914191113.onnx
+- name: MODEL_VERSION
+  value: '20260914191113'
+- name: MODEL_FORMAT
+  value: onnx
 ```
 
 ## Verificar as revisões do Cloud Run
@@ -498,7 +518,8 @@ Esses volumes permitem que:
 - o Airflow acesse a DAG;
 - a DAG reutilize os scripts existentes;
 - o dataset seja salvo em `data/`;
-- o modelo seja salvo em `artifacts/`;
+- o modelo Joblib seja salvo em `artifacts/`;
+- o modelo ONNX seja gerado em `artifacts/`;
 - a chave da conta de serviço seja acessada com segurança;
 - os arquivos gerados sejam acessíveis no host.
 
@@ -513,7 +534,9 @@ sudo chown -R 50000:0 \
   airflow/plugins \
   data \
   artifacts
+```
 
+```bash
 sudo chmod -R ug+rwX \
   airflow/logs \
   airflow/plugins \
@@ -557,21 +580,27 @@ train_model
   ↓
 artifacts/medical_abstracts_model.joblib
   ↓
+export_model_onnx
+  ↓
+artifacts/medical_abstracts_model.onnx
+  ↓
 Cloud Storage
   ↓
 publish_model
   ↓
 Nova revisão do Cloud Run
   ↓
-API utilizando o modelo atualizado
+API utilizando ONNX Runtime
 ```
 
 O processo mensal está configurado para realizar automaticamente:
 
 1. Ingestão do dataset;
 2. Preparação dos dados;
-3. Retreinamento do modelo;
+3. Retreinamento do modelo Joblib;
 4. Avaliação do modelo;
-5. Publicação do artefato no Cloud Storage;
-6. Atualização da variável `MODEL_URI`;
-7. Criação de uma nova revisão no Cloud Run.
+5. Exportação do modelo para ONNX;
+6. Publicação do modelo ONNX no Cloud Storage;
+7. Atualização das variáveis `MODEL_URI`, `MODEL_FORMAT` e `MODEL_VERSION`;
+8. Criação de uma nova revisão no Cloud Run;
+9. Direcionamento do tráfego para a nova revisão.
